@@ -11,11 +11,15 @@ from urllib.parse import urljoin
 import pandas as pd
 import fileinput
 import logging
+import fasttext 
 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logging.basicConfig(format='%(levelname)s:%(message)s')
+
+model = fasttext.load_model('/workspace/datasets/fasttext/query_classifier.bin')
+category_threshold = 0.3
 
 # expects clicks and impressions to be in the row
 def create_prior_queries_from_group(
@@ -185,12 +189,37 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
         query_obj["_source"] = source
     return query_obj
 
+def get_categories(query: str):
+    candidate_count = 5 
+    normalized_query = query.lower()
+    normalized_query_tokens = normalized_query.split()
+    stemmed_tokens = list(map(lambda x: stemmer.stem(x), normalized_query, tokens))
+    print(stemmed_tokens)
+    normalized_query = ' '.join(stemmed_tokens)
+    print(normalized_query)
+    categories, probs = model.predict(normalized_query, k=candidate_count)
 
-def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc"):
+    print(categories)
+    print(probs)
+
+    cat_len = len(categories)
+    category+list = []
+
+    for i in range(0, cat_len):
+        if probs[i] > category_threshold:
+            curr_cat = categories[i].replace('__label__', "")
+            category_list.append(curr_cat)
+        else:
+            break
+    return category_list
+
+
+def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", should_boost_categories=false):
     #### W3: classify the query
     #### W3: create filters and boosts
     # Note: you may also want to modify the `create_query` method above
-    query_obj = create_query(user_query, click_prior_query=None, filters=None, sort=sort, sortDir=sortDir, source=["name", "shortDescription"])
+    categories = get_categories(user_query)
+    query_obj = create_query(user_query, click_prior_query=None, filters=None, sort=sort, sortDir=sortDir, source=["name", "shortDescription"], categories=categories, should_boost_categories=should_boost_categories)
     logging.info(query_obj)
     response = client.search(query_obj, index=index)
     if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
@@ -212,6 +241,7 @@ if __name__ == "__main__":
                          help='The OpenSearch port')
     general.add_argument('--user',
                          help='The OpenSearch admin.  If this is set, the program will prompt for password too. If not set, use default of admin/admin')
+    general.add_argument('--should_boost-categories', action=argparse.BooleanOptionalAction, help='whether to use categories for boosting or filtering')
 
     args = parser.parse_args()
 
